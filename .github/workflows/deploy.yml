@@ -1,0 +1,78 @@
+name: RailAlert CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: Validation & Build Test
+  # ----------------------------------------------------------------------------
+  validate:
+    name: Build & Syntax Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Validate Backend Code & Dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Verify Python syntax and AST across all backend modules
+          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('app/**/*.py', recursive=True)]; print('Backend syntax check passed.')"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package.json
+
+      - name: Test Frontend Build
+        run: |
+          cd frontend
+          npm ci --prefer-offline
+          npm run build
+
+  # ----------------------------------------------------------------------------
+  # Job 2: Native SSH Deployment to AWS EC2 (No Docker)
+  # ----------------------------------------------------------------------------
+  deploy:
+    name: Deploy to AWS EC2
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Execute Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          script_stop: true
+          command_timeout: 10m
+          script: |
+            echo "Connected to AWS EC2 instance. Initiating RailAlert native deployment..."
+            export APP_DIR="/home/ubuntu/railalert"
+            if [ -f "$APP_DIR/scripts/deploy.sh" ]; then
+              bash "$APP_DIR/scripts/deploy.sh"
+            else
+              echo "Error: deploy.sh script not found at $APP_DIR/scripts/deploy.sh"
+              exit 1
+            fi

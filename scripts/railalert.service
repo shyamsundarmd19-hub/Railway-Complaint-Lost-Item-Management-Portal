@@ -1,0 +1,36 @@
+[Unit]
+Description=RailAlert FastAPI Backend Service (Uvicorn / Gunicorn)
+After=network.target remote-fs.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/railalert/backend
+Environment="PATH=/home/ubuntu/railalert/backend/venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=-/home/ubuntu/railalert/backend/.env
+
+# Gunicorn process manager with 2 Uvicorn workers (optimized for AWS Free Tier 1GB RAM)
+ExecStart=/home/ubuntu/railalert/backend/venv/bin/gunicorn app.main:app \
+    --workers 2 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --timeout 120 \
+    --keep-alive 5 \
+    --access-logfile /var/log/railalert/access.log \
+    --error-logfile /var/log/railalert/error.log \
+    --capture-output
+
+# Resilience & Auto-Restart Policies
+Restart=always
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30
+PrivateTmp=true
+
+# File descriptor limit for concurrent connection pooling
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
